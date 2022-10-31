@@ -1,0 +1,269 @@
+#!/bin/bash
+
+COMMAND=$1
+PYTHON_VERSION=3.10
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+    --python-version)
+        PYTHON_VERSION="$2"
+        shift
+        shift
+        ;;
+    *)
+        COMMAND=$1
+        shift
+        break
+        ;;
+    esac
+    shift
+done
+
+PYTHON=python${PYTHON_VERSION}
+# CHECK PYTHON 3
+if command -v "${PYTHON}" &>/dev/null; then
+    echo Python3 available
+else
+    echo Python3 not available, please install it or add to the PATH variable
+    exit 1
+fi
+
+# CHECK PIP
+if command -v "${PYTHON}" -m pip &>/dev/null; then
+    echo Pip available
+else
+    echo Pip not available, please install it or add to the PATH variable
+    exit 1
+fi
+
+# CHECK VIRTUALENV COMMAND
+if command -v "${PYTHON}" -m venv &>/dev/null; then
+    echo Venv command available
+else
+    echo Venv not available, please install it [For example: python3 -m pip install python-venv]
+    exit 1
+fi
+
+# Redependencies function
+function redependencies {
+    .venv/bin/pip3 install -r requirements.txt
+    .venv/bin/pip3 install -r requirements-dev.txt
+}
+
+# CHECK VENV NOT EXISTS
+if [ ! -d .venv ]; then
+
+    $PYTHON -m venv .venv
+    if [ ! -d .pip ]; then
+        mkdir .pip
+        curl https://bootstrap.pypa.io/get-pip.py -o .pip/get-pip.py
+    fi
+    .venv/bin/python3 .pip/get-pip.py
+    redependencies
+fi
+
+if [ -f '.env' ]; then
+    echo Use .env file to read sensitive information
+    while IPS='=' read -r key _; do
+        eval "${key}"
+    done <'.env'
+else
+    # REGENERATE SENSITIVE INFO FROM TEMPLATE
+    cat >'.env' <<EOF
+DJANGO_SECRET_KEY='django-insecure-fl-)+d7g6a@xcjqckh+^eggbx%2)+0fo(^!4npta)xb#4ab610'
+PYTHONPATH=.
+EOF
+fi
+
+echo EXECUTE
+echo "=========== ${COMMAND}"
+echo "${COMMAND} ==========="
+echo COMMAND
+
+if [ "$COMMAND" == "manage" ]; then
+    echo Run manage.py script manage.py "$@"
+    # Sample: ./buildew manage loaddata app_moods/fixtures/geometry_shapes.yaml
+    DJANGO_SECRET_KEY=$(.venv/bin/python3 -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())')
+    export DJANGO_SECRET_KEY
+    export DJANGO_DEBUG=True
+    export PYTHONPATH=${PYTHONPATH}
+
+    .venv/bin/python3 manage.py "$@"
+fi
+
+if [ "$COMMAND" == "redeps" ]; then
+    echo "Reinstall dependencies"
+    redependencies
+fi
+
+if [ "$COMMAND" == "clean" ]; then
+    echo "Clean temporary folders"
+    find . -name __pycache__ -print0 | xargs rm -fr -0
+fi
+
+if [ "$COMMAND" == "run" ]; then
+    echo 'Run site'
+    export PYTHONPATH=${PYTHONPATH}
+    .venv/bin/python manage.py runserver
+fi
+
+#                         #
+# PUBLISH TO THE PYPI.ORG #
+#                         #
+if [ "$COMMAND" == "publish" ]; then
+    echo 'Publish on the pypi.org'
+    #!/bin/bash
+    rm -fr build
+    rm -fr dist
+    .venv/bin/python3 setup.py bdist_wheel
+    .venv/bin/python3 setup.py sdist
+    .venv/bin/twine upload dist/*
+fi
+
+if [ "$COMMAND" == "check-publish" ]; then
+    .venv/bin/python3 setup.py check -r -s
+fi
+
+#                                    #
+# DOCKER INFRASTRACTURE AND COMMANDS #
+#                                    #
+
+function react_build {
+    echo "Build react component $1 from $2 to file $3"
+    CURRENT_DIRECTORY=$PWD
+    cd "$2" || {
+        echo "The change to folder $2 is fail, line: 133"
+        exit 1
+    }
+    npm i
+    npm run build
+    cd "$CURRENT_DIRECTORY" || {
+        echo "The change to folder $CURRENT_DIRECTORY is fail, line: 139"
+        exit 1
+    }
+
+    cp "$2/build/$1.js" "$3/js/"
+    # cp $2/build/$1.js.LICENSE.txt $3/js/
+    cp "$2/build/$1.js.map" "$3/js/"
+
+    cp "$2/build/$1.default.css" "$3/css/"
+    cp "$2/build/$1.default.css.map" "$3/css/"
+
+    cd "$2" || {
+        echo "The change to folder $2 is fail, line: 151"
+        exit 1
+    }
+    npm run build minify
+    cd "$CURRENT_DIRECTORY" || {
+        echo "The change to folder $CURRENT_DIRECTORY is fail, line: 156"
+        exit 1
+    }
+
+    cp "$2/build/$1.min.js" "$3/js/"
+    # cp $2/build/$1.min.js.LICENSE.txt $3/js/
+    cp "$2/build/$1.min.js.map" "$3/js/"
+
+    cp "$2/build/$1.default.min.css" "$3/css/"
+    cp "$2/build/$1.default.min.css.map" "$3/css/"
+}
+
+# function npm_build {
+#     echo "Build react component $1 from $2 to file $3"
+#     CURRENT_DIRECTORY=$PWD
+#     cd $2
+#     npm i phantomjs-prebuilt@2.1.14 --ignore-scripts
+#     npm i
+#     npm i grunt-cli
+#     npx grunt-cli --force
+#     cd $CURRENT_DIRECTORY
+#
+#     mkdir -p $3/js/$1
+#     cp $2/dist/js/* $3/js/$1/
+#     mkdir -p $3/css/$1
+#     cp $2/dist/css/* $3/css/$1/
+#     mkdir -p $3/img/$1
+#     cp $2/dist/img/* $3/img/$1/
+# }
+
+function build {
+    echo "Complex procedure build"
+}
+
+if [ "$COMMAND" == "build" ]; then
+    build
+fi
+
+function check_folder {
+    FOLDER=$1
+    mkdir -p "$FOLDER" || exit 1
+    chmod a+rwx "$FOLDER"
+    SERVICES=('postgresdb' 'gmig' 'front')
+    for SERVICE in "${SERVICES[@]}"; do
+        mkdir -p "$FOLDER/$SERVICE" || {
+            echo "The change to folder $FOLDER/$SERVICE is fail, line: 201"
+            exit 1
+        }
+        chmod a+rwx "$FOLDER/$SERVICE"
+    done
+}
+
+function start {
+    # Check the data folders
+    check_folder .data
+    # Tune images folder
+    mkdir -p .data/front/images || {
+        echo "The change to folder $CURRENT_DIRECTORY is fail, line: 211"
+        exit 1
+    }
+    chmod a+rwx .data/front/images
+
+    # Sync Images, TODO: put on s3 storage
+    # cp back/app/static/images/photo_2021-11-10_11-15-00.jpg .data/front/images/cover
+
+    # Check the temporary folders
+    check_folder .tmp
+
+    # Check the logger folders
+    check_folder .logs
+    # Tune front folders
+    mkdir -p .logs/front/nginx || exit 1
+    chmod a+rwx .logs/front/nginx
+
+    if [ "$1" == "" ]; then
+        docker-compose up
+    else
+        docker-compose up "$@"
+    fi
+}
+
+if [ "$COMMAND" == "run" ] || [ "$COMMAND" == "up" ] || [ "$COMMAND" == "start" ]; then
+    echo 'Run docker images'
+
+    start "$@"
+
+fi
+
+function stop {
+    if [ "$1" == "" ]; then
+        docker-compose down -v
+    else
+        docker-compose stop "$@"
+    fi
+}
+
+if [ "$COMMAND" == "stop" ] || [ "$COMMAND" == "down" ] || [ "$COMMAND" == "finish" ]; then
+    echo 'Stop docker images'
+
+    stop "$@"
+fi
+
+if [ "$COMMAND" == "restart" ]; then
+    echo 'Restart services or whole system'
+    stop "$@"
+    start "$@"
+fi
+
+# =================================================================================================
+
+AVAILABLE_COMMANDS="run build drun up start stop down finish publish check-publish redeps clean"
+echo ''
+[[ $AVAILABLE_COMMANDS =~ (^| )$COMMAND($| ) ]] && echo 'Ok' || echo 'Unknown command: ' "$COMMAND" && echo 'Available commands are: ' "$AVAILABLE_COMMANDS"

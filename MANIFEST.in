@@ -1,0 +1,7 @@
+include LICENSE
+include README.rst
+include requirements.txt
+recursive-include django_data_battery/static *
+recursive-include django_data_battery/templates *
+recursive-include django_data_battery/locale *
+recursive-include django_data_battery/utils *
