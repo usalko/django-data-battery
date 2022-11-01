@@ -1,0 +1,17 @@
+
+
+
+INSERT_TRIGGER_TEMPLATE='''
+
+
+'''
+
+UPDATE_TRIGGER_TEMPLATE='''
+
+
+'''
+
+DELETE_TRIGGER_TEMPLATE='''
+
+
+'''

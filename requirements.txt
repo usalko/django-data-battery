@@ -1,2 +1,1 @@
-Django>=3.2
-django_static_jquery_ui>=1.12.1.1
+django-wikibase>=1.1
