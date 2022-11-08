@@ -1,4 +1,6 @@
 from django.db import models
+from django.utils.translation import gettext_lazy as _
+
 
 
 '''
@@ -38,3 +40,9 @@ function elegantUnpair(z) {
 class DjangoModel(models.Model):
     type_name = models.CharField(
         max_length=150, unique=True, verbose_name='type name'),
+
+    class Meta:
+        'Django models for synchronization with wikibase'
+        verbose_name = _('django model')
+        verbose_name_plural = _('django models')
+        db_table = 'django_data_battery_django_models'
