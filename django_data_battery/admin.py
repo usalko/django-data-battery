@@ -1,12 +1,15 @@
+from django.apps import apps
+from django.conf import settings
 from django.contrib import admin, messages
-from django.contrib.admin.options import (HttpResponseRedirect, csrf_protect_m,
-                                          unquote)
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from django.contrib.auth.models import User
-from django.db.models import Model
+from django.contrib.admin.options import (HttpResponseRedirect)
 from django.urls import path
 
 from .models import *
+from .utils.triggers_factory import TriggersFactory
+
+
+def _default_database_type() -> str:
+    return str(settings.DATABASES['default']['ENGINE'].split('.')[-1]).lower()
 
 
 class DjangoModelAdmin(admin.ModelAdmin):
@@ -14,33 +17,37 @@ class DjangoModelAdmin(admin.ModelAdmin):
 
     actions = ['_refresh']
 
+    database_type = _default_database_type()
+
     def _refresh(self, request, queryset=None):
-        updated_count = 1
+        added_count = 0
 
-        # from django.apps import apps
+        for model in apps.get_models():  # Returns a "list" of all models created
+            if model._meta.app_label == 'django_data_battery':
+                continue
+            django_type = f'{model._meta.app_label}.{model.__name__}'
+            django_model = DjangoModel.objects.filter(
+                type_name__iexact=django_type)
+            if not django_model:
+                django_model = DjangoModel(type_name=django_type)
+                django_model.save()
+                added_count += 1
 
-        # app_models = [model.__name__ for model in apps.get_models()] # Returns a "list" of all models created
+            # Create triggers
+            if self.database_type == 'sqlite3':
+                DjangoModel.objects.raw(
+                    TriggersFactory.create_trigger_on_insert_sqlite(model._meta.db_table))
+            else:
+                raise BaseException(
+                    f'Database type: {self.database_type} is not handling')
 
-        msg = "Marked {} new objects from existing".format(updated_count)
-        self.message_user(request, msg, messages.SUCCESS)
+        if added_count:
+            msg = "Added {} new django models".format(added_count)
+            self.message_user(request, msg, messages.SUCCESS)
 
         return HttpResponseRedirect("../")
 
     _refresh.short_description = 'Refresh all models'
-
-    # @csrf_protect_m
-    # def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
-    #     if request.method == 'POST' and '_refresh' in request.POST:
-    #         obj = self.get_object(request, unquote(object_id))
-    #         self.make_published(request, obj)
-    #         return HttpResponseRedirect(request.get_full_path())
-
-    #     return admin.ModelAdmin.changeform_view(
-    #         self, request,
-    #         object_id=object_id,
-    #         form_url=form_url,
-    #         extra_context=extra_context,
-    #     )
 
     def get_urls(self):
         urls = super().get_urls()

@@ -2,7 +2,6 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 
-
 '''
 DESCRIPTION FOR AN ALGORITHM FOR COMPOUND ID value (@see also http://szudzik.com/ElegantPairing.pdf)
 
@@ -37,9 +36,11 @@ function elegantUnpair(z) {
 
 '''
 
+
 class DjangoModel(models.Model):
+
     type_name = models.CharField(
-        max_length=150, unique=True, verbose_name='type name'),
+        max_length=150, unique=True, verbose_name='type name')
 
     class Meta:
         'Django models for synchronization with wikibase'

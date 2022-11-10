@@ -16,6 +16,7 @@ class Migration(migrations.Migration):
             name='DjangoModel',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('type_name', models.CharField(max_length=150, unique=True, verbose_name='type name')),
             ],
             options={
                 'verbose_name': 'django model',

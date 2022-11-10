@@ -24,7 +24,8 @@ class TriggersFactory:
     @classmethod
     def _django_model_id(cls, table_name: str) -> int:
         # TODO convert table name to type in django manager
-        django_model, _ = DjangoModel.objects.get_or_create({'django_type': table_name})
+        django_model, _ = DjangoModel.objects.get_or_create(
+            {'django_type': table_name})
         return django_model.pk
 
     @classmethod
@@ -34,7 +35,7 @@ class TriggersFactory:
     @classmethod
     def create_trigger_on_insert_sqlite(cls, table_name):
         return f'''
-            CREATE TRIGGER IF NOT EXISTS {cls._unique_trigger_name(table_name)} 
+            CREATE TRIGGER IF NOT EXISTS {cls._unique_trigger_name(table_name, EventType.INSERT)} 
             AFTER INSERT
             ON {table_name}
             BEGIN
