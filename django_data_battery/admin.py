@@ -19,15 +19,30 @@ class DjangoModelAdmin(admin.ModelAdmin):
 
     database_type = _default_database_type()
 
+    list_display = ('id', 'type_name')
+    # list_filter = ('id', 'type_name')
+    search_fields = ('id', 'type_name')
+    ordering = ('type_name',)
+
     def _refresh(self, request, queryset=None):
         added_count = 0
 
         for model in apps.get_models():  # Returns a "list" of all models created
             if model._meta.app_label == 'django_data_battery':
                 continue
+            if model._meta.app_label == 'admin':
+                continue
+            if model._meta.app_label == 'auth':
+                continue
+            if model._meta.app_label == 'contenttypes':
+                continue
+            if model._meta.app_label == 'sessions':
+                continue
+            if model._meta.app_label == 'reversion':
+                continue
             django_type = f'{model._meta.app_label}.{model.__name__}'
             django_model = DjangoModel.objects.filter(
-                type_name__iexact=django_type)
+                type_name__iexact=django_type).first()
             if not django_model:
                 django_model = DjangoModel(type_name=django_type)
                 django_model.save()
@@ -35,8 +50,8 @@ class DjangoModelAdmin(admin.ModelAdmin):
 
             # Create triggers
             if self.database_type == 'sqlite3':
-                DjangoModel.objects.raw(
-                    TriggersFactory.create_trigger_on_insert_sqlite(model._meta.db_table))
+                len(DjangoModel.objects.raw(
+                    TriggersFactory.create_trigger_on_insert_sqlite(django_type)))
             else:
                 raise BaseException(
                     f'Database type: {self.database_type} is not handling')

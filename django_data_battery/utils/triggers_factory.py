@@ -1,6 +1,7 @@
 
 from enum import Enum
 from django_data_battery.models import DjangoModel
+from django.apps import apps
 
 
 class EventType(Enum):
@@ -22,25 +23,30 @@ class TriggersFactory:
         raise BaseException(f'Not supported event type: {event_type}')
 
     @classmethod
-    def _django_model_id(cls, table_name: str) -> int:
+    def _django_model_id(cls, type_name: str) -> int:
         # TODO convert table name to type in django manager
-        django_model, _ = DjangoModel.objects.get_or_create(
-            {'django_type': table_name})
-        return django_model.pk
+        result = DjangoModel.objects.filter(type_name=type_name).first()
+        return result.pk if result else None
+
+    @classmethod
+    def _model(cls, app_label, model_name) -> str:
+        return
 
     @classmethod
     def create_trigger_on_delete(cls, table_name):
         pass
 
     @classmethod
-    def create_trigger_on_insert_sqlite(cls, table_name):
+    def create_trigger_on_insert_sqlite(cls, django_type: str):
+        model = apps.get_model(django_type.split(
+            '.')[0], django_type.split('.')[1])
         return f'''
-            CREATE TRIGGER IF NOT EXISTS {cls._unique_trigger_name(table_name, EventType.INSERT)} 
+            CREATE TRIGGER IF NOT EXISTS {cls._unique_trigger_name(model._meta.db_table, EventType.INSERT)} 
             AFTER INSERT
-            ON {table_name}
+            ON {model._meta.db_table}
             BEGIN
                 -- TODO: calculate pair function value instead simple NEW.id 
-                insert into django_data_battery_inserted_ids (id, django_model_id) values (NEW.id, {cls._django_model_id(table_name)});
+                insert into django_data_battery_inserted_ids (id, django_model_id) values (NEW.id, {cls._django_model_id(django_type)});
             END;
             '''
 
