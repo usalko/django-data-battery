@@ -1,7 +1,10 @@
+from logging import exception
+
 from django.apps import apps
 from django.conf import settings
 from django.contrib import admin, messages
-from django.contrib.admin.options import (HttpResponseRedirect)
+from django.contrib.admin.options import HttpResponseRedirect
+from django.db import connection
 from django.urls import path
 
 from .models import *
@@ -50,8 +53,12 @@ class DjangoModelAdmin(admin.ModelAdmin):
 
             # Create triggers
             if self.database_type == 'sqlite3':
-                len(DjangoModel.objects.raw(
-                    TriggersFactory.create_trigger_on_insert_sqlite(django_type)))
+                try:
+                    cursor = connection.cursor()
+                    cursor.execute(
+                        TriggersFactory.create_trigger_on_insert_sqlite(django_type))
+                except BaseException as e:
+                    exception(e)
             else:
                 raise BaseException(
                     f'Database type: {self.database_type} is not handling')
