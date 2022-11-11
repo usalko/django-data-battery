@@ -55,8 +55,8 @@ class DjangoModelAdmin(admin.ModelAdmin):
             if self.database_type == 'sqlite3':
                 try:
                     cursor = connection.cursor()
-                    cursor.execute(
-                        TriggersFactory.create_trigger_on_insert_sqlite(django_type))
+                    for statement in TriggersFactory.create_statements_on_insert_sqlite(django_type):
+                        cursor.execute(statement)
                 except BaseException as e:
                     exception(e)
             else:
