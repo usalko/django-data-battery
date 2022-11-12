@@ -1,1 +1,1 @@
-django-wikibase>=0.1.1
+django-wikibase[wikibase]>=0.1.1

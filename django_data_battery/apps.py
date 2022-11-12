@@ -9,4 +9,4 @@ else:
 class AppConfig(DjangoAppConfig):
     """Configuration for the django_data_battery app"""
     label = name = 'django_data_battery'
-    verbose_name = _('Django inflight wikibase data export')
+    verbose_name = _('Django inflight data export')
