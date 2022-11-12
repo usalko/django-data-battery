@@ -15,6 +15,13 @@ def _default_database_type() -> str:
     return str(settings.DATABASES['default']['ENGINE'].split('.')[-1]).lower()
 
 
+class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
+
+    class Meta:
+        model = DatabaseConnectionSettings
+        fields = ['id']
+
+
 class DjangoModelAdmin(admin.ModelAdmin):
     change_list_template = 'django_data_battery/admin_change_list_django_model.html'
 
@@ -87,3 +94,4 @@ class DjangoModelAdmin(admin.ModelAdmin):
 
 
 admin.site.register(DjangoModel, DjangoModelAdmin)
+admin.site.register(DatabaseConnectionSettings, DatabaseConnectionSettingsAdmin)

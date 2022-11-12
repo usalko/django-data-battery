@@ -15,8 +15,10 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='DjangoModel',
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('type_name', models.CharField(max_length=150, unique=True, verbose_name='type name')),
+                ('id', models.BigAutoField(auto_created=True,
+                 primary_key=True, serialize=False, verbose_name='ID')),
+                ('type_name', models.CharField(max_length=150,
+                 unique=True, verbose_name='type name')),
             ],
             options={
                 'verbose_name': 'django model',
@@ -28,7 +30,8 @@ class Migration(migrations.Migration):
             name='UpdatedIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'updated id',
@@ -40,7 +43,8 @@ class Migration(migrations.Migration):
             name='InsertedIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'inserted id',
@@ -52,7 +56,8 @@ class Migration(migrations.Migration):
             name='InflightUpdateIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'inflight update id',
@@ -64,7 +69,8 @@ class Migration(migrations.Migration):
             name='InflightInsertIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'inflight insert id',
@@ -76,7 +82,8 @@ class Migration(migrations.Migration):
             name='InflightDeleteIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'inflight delete id',
@@ -88,12 +95,33 @@ class Migration(migrations.Migration):
             name='DeletedIds',
             fields=[
                 ('id', models.IntegerField(primary_key=True, serialize=False)),
-                ('django_model', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
+                ('django_model', models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE, to='django_data_battery.djangomodel')),
             ],
             options={
                 'verbose_name': 'deleted id',
                 'verbose_name_plural': 'deleted ids',
                 'db_table': 'django_data_battery_deleted_ids',
+            },
+        ),
+        migrations.CreateModel(
+            name='DatabaseConnectionSettings',
+            fields=[
+                ('id', models.BigAutoField(auto_created=True,
+                 primary_key=True, serialize=False, verbose_name='ID')),
+                ('engine', models.CharField(
+                    max_length=150, verbose_name='database engine')),
+                ('name', models.CharField(max_length=150, verbose_name='database name')),
+                ('user', models.CharField(max_length=150, verbose_name='database user')),
+                ('password', models.CharField(
+                    max_length=150, verbose_name='database password')),
+                ('host', models.CharField(max_length=150, verbose_name='database host')),
+                ('port', models.CharField(max_length=150, verbose_name='database port')),
+            ],
+            options={
+                'verbose_name': 'database connection settings',
+                'verbose_name_plural': 'databases connections settings',
+                'db_table': 'django_data_battery_database_connection_settings',
             },
         ),
     ]
