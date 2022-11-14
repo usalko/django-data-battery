@@ -8,9 +8,12 @@ from django.contrib.admin.utils import unquote
 from django.core import management
 from django.db import connection, connections
 from django.urls import path
+from django.contrib.auth.models import User
+
 
 from .models import *
 from .utils.triggers_factory import TriggersFactory
+from .utils.useful_tools import _elegant_unpair
 
 
 def _default_database_type() -> str:
@@ -115,11 +118,53 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
         return database_id
 
+    def _save_and_correct_sequences(self, obj: models.Model, database_id: str, read_circuit_breaker: set):
+        if obj in read_circuit_breaker:
+            return
+        if isinstance(obj, User):
+            User(id=obj.pk).save(using=database_id)
+            return
+
+        read_circuit_breaker.add(obj)
+        # Detect all references
+        for field_object in type(obj)._meta.get_fields():
+            if isinstance(field_object, models.ForeignKey):
+                relation_object = getattr(obj, field_object.name)
+                if relation_object:
+                    self._save_and_correct_sequences(
+                        relation_object, database_id, read_circuit_breaker)
+            elif field_object.many_to_many:
+                # for referenced_object in field_object.
+                if hasattr(obj, f'{field_object.name}_set'):
+                    for relation_object in getattr(obj, f'{field_object.name}_set').all():
+                        self._save_and_correct_sequences(
+                            relation_object, database_id, read_circuit_breaker)
+                elif hasattr(obj, field_object.name):
+                    for relation_object in getattr(obj, field_object.name).all():
+                        self._save_and_correct_sequences(
+                            relation_object, database_id, read_circuit_breaker)
+        try:
+            obj.save(using=database_id)
+        except BaseException as e:
+            exception(e)
+
     def _export_inserted(self, request, obj: DatabaseConnectionSettings = None):
         database_id = self._get_or_create_database_id(obj)
         for app_label in set([model._meta.app_label for model in apps.get_models()]):
             management.call_command(
                 'migrate', app_label, database=database_id)
+
+        # TODO: BATCH COPY FROM InsertedIds to the InflightInsertIds
+
+        for inflight_id in InsertedIds.objects.all():
+            django_object_id, _ = _elegant_unpair(inflight_id.id)
+            django_type = inflight_id.django_model.type_name
+            model = apps.get_model(django_type.split(
+                '.')[0], django_type.split('.')[1])
+            model_instance = model.objects.get(pk=django_object_id)
+
+            self._save_and_correct_sequences(
+                model_instance, database_id, set())
 
         self.message_user(
             request, f'Export all inserted for the connection {obj}', messages.SUCCESS)

@@ -44,6 +44,11 @@ class TriggersFactory:
         model = apps.get_model(django_type.split(
             '.')[0], django_type.split('.')[1])
         return [f'''
+
+            DROP TRIGGER IF EXISTS {cls._unique_trigger_name(model._meta.db_table, EventType.INSERT)}_x_more_or_equal_y;
+
+            ''',
+                f'''
             -- Szudzik elegant pair: x * x + x + y if x >= y else y * y + x
 
             CREATE TRIGGER IF NOT EXISTS {cls._unique_trigger_name(model._meta.db_table, EventType.INSERT)}_x_more_or_equal_y 
@@ -54,6 +59,11 @@ class TriggersFactory:
                 insert into django_data_battery_inserted_ids (id, django_model_id) values (((NEW.id * NEW.id) + NEW.id + {cls._django_model_id(django_type)}), {cls._django_model_id(django_type)});
             END;
             
+            ''',
+                f'''
+
+            DROP TRIGGER IF EXISTS {cls._unique_trigger_name(model._meta.db_table, EventType.INSERT)}_x_less_y;
+
             ''',
                 f'''
             -- Szudzik elegant pair: x * x + x + y if x >= y else y * y + x
