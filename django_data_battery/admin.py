@@ -9,6 +9,7 @@ from django.core import management
 from django.db import connection, connections
 from django.urls import path
 from django.contrib.auth.models import User
+from django.core.management.commands import migrate
 
 
 from .models import *
@@ -149,25 +150,35 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
             exception(e)
 
     def _export_inserted(self, request, obj: DatabaseConnectionSettings = None):
-        database_id = self._get_or_create_database_id(obj)
-        for app_label in set([model._meta.app_label for model in apps.get_models()]):
-            management.call_command(
-                'migrate', app_label, database=database_id)
+        try:
+            database_id = self._get_or_create_database_id(obj)
+            for app_label in set([model._meta.app_label for model in apps.get_models()]):
+                migrate_command = migrate.Command()
+                migrate_command.verbosity = 1
+                migrate_command.sync_apps(
+                    connections[database_id], app_labels=app_label)
 
-        # TODO: BATCH COPY FROM InsertedIds to the InflightInsertIds
+            # TODO: BATCH COPY FROM InsertedIds to the InflightInsertIds
+            # FIXME: Disable constraints
 
-        for inflight_id in InsertedIds.objects.all():
-            django_object_id, _ = _elegant_unpair(inflight_id.id)
-            django_type = inflight_id.django_model.type_name
-            model = apps.get_model(django_type.split(
-                '.')[0], django_type.split('.')[1])
-            model_instance = model.objects.get(pk=django_object_id)
+            for inflight_id in InsertedIds.objects.all():
+                django_object_id, _ = _elegant_unpair(inflight_id.id)
+                django_type = inflight_id.django_model.type_name
+                model = apps.get_model(django_type.split(
+                    '.')[0], django_type.split('.')[1])
+                model_instance = model.objects.get(pk=django_object_id)
 
-            self._save_and_correct_sequences(
-                model_instance, database_id, set())
+                self._save_and_correct_sequences(
+                    model_instance, database_id, set())
 
-        self.message_user(
-            request, f'Export all inserted for the connection {obj}', messages.SUCCESS)
+            # FIXME: Enable constraints
+
+            self.message_user(
+                request, f'Export all inserted for the connection {obj}', messages.SUCCESS)
+        except BaseException as e:
+            exception(e)
+            self.message_user(
+                request, f'Sorry, but error occur {e}', messages.ERROR)
 
     _export_inserted.short_description = 'Export all inserted'
 
