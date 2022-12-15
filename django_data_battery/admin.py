@@ -5,11 +5,11 @@ from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.options import HttpResponseRedirect, csrf_protect_m
 from django.contrib.admin.utils import unquote
-from django.core import management
-from django.db import connection, connections
+from django.db import connection, connections, transaction
 from django.urls import path
 from django.contrib.auth.models import User
 from django.core.management.commands import migrate
+from django.db.models import signals
 
 
 from .models import *
@@ -119,7 +119,27 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
         return database_id
 
-    def _save_and_correct_sequences(self, obj: models.Model, database_id: str, read_circuit_breaker: set):
+    def _temporary_clear(self, db: str, obj: models.Model, attribute_name: str):
+        many_to_many_manager = getattr(obj, attribute_name)
+        with transaction.atomic(using=db, savepoint=False):
+            signals.m2m_changed.send(
+                sender=many_to_many_manager.through, action="pre_clear",
+                instance=many_to_many_manager.instance, reverse=many_to_many_manager.reverse,
+                model=many_to_many_manager.model, pk_set=None, using=db,
+            )
+            many_to_many_manager._remove_prefetched_objects()
+            filters = many_to_many_manager._build_remove_filters(
+                many_to_many_manager.get_queryset().using(db))
+            many_to_many_manager.through._default_manager.using(
+                db).filter(filters).delete()
+
+            signals.m2m_changed.send(
+                sender=many_to_many_manager.through, action="post_clear",
+                instance=many_to_many_manager.instance, reverse=many_to_many_manager.reverse,
+                model=many_to_many_manager.model, pk_set=None, using=db,
+            )
+
+    def _save_and_correct_sequences(self, obj: models.Model, database_id: str, read_circuit_breaker: set, many_to_many_attributes: dict, without_many_to_many: bool):
         if obj in read_circuit_breaker:
             return
         if isinstance(obj, User):
@@ -127,25 +147,58 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
             return
 
         read_circuit_breaker.add(obj)
+        global_id = (obj._meta.model_name, obj.pk)
         # Detect all references
         for field_object in type(obj)._meta.get_fields():
             if isinstance(field_object, models.ForeignKey):
                 relation_object = getattr(obj, field_object.name)
                 if relation_object:
                     self._save_and_correct_sequences(
-                        relation_object, database_id, read_circuit_breaker)
+                        relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                    # setattr(obj, field_object.name, relation_object)
             elif field_object.many_to_many:
+                values = []
+                attribute_name = None
+                many_to_many_references = None
                 # for referenced_object in field_object.
                 if hasattr(obj, f'{field_object.name}_set'):
-                    for relation_object in getattr(obj, f'{field_object.name}_set').all():
+                    attribute_name = f'{field_object.name}_set'
+                    many_to_many_references = getattr(obj, attribute_name)
+                    for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
-                            relation_object, database_id, read_circuit_breaker)
+                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                        if not without_many_to_many:
+                            relation_object.refresh_from_db(using=database_id)
+                        values.append(relation_object)
                 elif hasattr(obj, field_object.name):
-                    for relation_object in getattr(obj, field_object.name).all():
+                    attribute_name = field_object.name
+                    many_to_many_references = getattr(obj, attribute_name)
+                    for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
-                            relation_object, database_id, read_circuit_breaker)
+                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                        if not without_many_to_many:
+                            relation_object.refresh_from_db(using=database_id)
+                        values.append(relation_object)
+
+                # mark many to many attribute
+                if not (global_id in many_to_many_attributes):
+                    many_to_many_attributes[global_id] = dict()
+
+                if attribute_name and values:
+                    many_to_many_attributes[global_id][attribute_name] = values
+
         try:
+            # save all exclude many to many
+            if global_id in many_to_many_attributes and many_to_many_attributes[global_id]:
+                for attribute_name, _ in many_to_many_attributes[global_id].items():
+                    self._temporary_clear(database_id, obj, attribute_name)
             obj.save(using=database_id)
+            # many to many handle
+            if global_id in many_to_many_attributes and many_to_many_attributes[global_id] and not without_many_to_many:
+                for attribute_name, values in many_to_many_attributes[global_id].items():
+                    getattr(obj, attribute_name).add(*values)
+                obj.save(using=database_id)
+
         except BaseException as e:
             exception(e)
 
@@ -159,7 +212,9 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     connections[database_id], app_labels=app_label)
 
             # TODO: BATCH COPY FROM InsertedIds to the InflightInsertIds
-            # FIXME: Disable constraints
+
+            # with connections[database_id].cursor() as cursor:
+            #     cursor.execute('''PRAGMA ignore_check_constraints = 1;''') # Here
 
             for inflight_id in InsertedIds.objects.all():
                 django_object_id, _ = _elegant_unpair(inflight_id.id)
@@ -168,10 +223,11 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     '.')[0], django_type.split('.')[1])
                 model_instance = model.objects.get(pk=django_object_id)
 
+                many_to_many_attributes = dict()
                 self._save_and_correct_sequences(
-                    model_instance, database_id, set())
-
-            # FIXME: Enable constraints
+                    model_instance, database_id, set(), many_to_many_attributes, True)
+                # self._save_and_correct_sequences(
+                #     model_instance, database_id, set(), many_to_many_attributes, False)
 
             self.message_user(
                 request, f'Export all inserted for the connection {obj}', messages.SUCCESS)
