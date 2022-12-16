@@ -5,7 +5,7 @@ from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.options import HttpResponseRedirect, csrf_protect_m
 from django.contrib.admin.utils import unquote
-from django.db import connection, connections, transaction
+from django.db import connection, connections, transaction, utils
 from django.urls import path
 from django.contrib.auth.models import User
 from django.core.management.commands import migrate
@@ -119,6 +119,28 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
         return database_id
 
+    def _save_with_the_child_tree(self, obj: models.Model, using: str):
+        try:
+            foreign_key_fields = [field_object for field_object in type(
+                obj)._meta.get_fields() if isinstance(field_object, models.ForeignKey)]
+            for field_object in foreign_key_fields:
+                relation_object = getattr(obj, field_object.name)
+                if relation_object:
+                    self._save_with_the_child_tree(relation_object, using=using)
+                    is_force_insert = not relation_object._meta.model.objects.using(using).filter(pk=relation_object.pk).exists()
+                    if is_force_insert:
+                        relation_object.save(using=using, force_insert=True)
+                    else:
+                        relation_object.save(using=using, force_update=True)
+
+            is_force_insert = not obj._meta.model.objects.using(using).filter(pk=obj.pk).exists()
+            if is_force_insert:
+                obj.save(using=using, force_insert=True)
+            else:
+                obj.save(using=using, force_update=True)
+        except BaseException as e:
+            raise e
+
     def _temporary_clear(self, db: str, obj: models.Model, attribute_name: str):
         many_to_many_manager = getattr(obj, attribute_name)
         with transaction.atomic(using=db, savepoint=False):
@@ -167,8 +189,6 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
                             relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
-                        if not without_many_to_many:
-                            relation_object.refresh_from_db(using=database_id)
                         values.append(relation_object)
                 elif hasattr(obj, field_object.name):
                     attribute_name = field_object.name
@@ -176,8 +196,6 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
                             relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
-                        if not without_many_to_many:
-                            relation_object.refresh_from_db(using=database_id)
                         values.append(relation_object)
 
                 # mark many to many attribute
@@ -188,14 +206,17 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     many_to_many_attributes[global_id][attribute_name] = values
 
         try:
-            # save all exclude many to many
+            # Empty all many to many
             if global_id in many_to_many_attributes and many_to_many_attributes[global_id]:
                 for attribute_name, _ in many_to_many_attributes[global_id].items():
                     self._temporary_clear(database_id, obj, attribute_name)
-            obj.save(using=database_id)
+            # Save all foreign key refs
+            self._save_with_the_child_tree(obj, using=database_id)
             # many to many handle
             if global_id in many_to_many_attributes and many_to_many_attributes[global_id] and not without_many_to_many:
                 for attribute_name, values in many_to_many_attributes[global_id].items():
+                    for value in values:
+                        self._save_with_the_child_tree(value, using=database_id)
                     getattr(obj, attribute_name).add(*values)
                 obj.save(using=database_id)
 
@@ -226,8 +247,9 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 many_to_many_attributes = dict()
                 self._save_and_correct_sequences(
                     model_instance, database_id, set(), many_to_many_attributes, True)
-                # self._save_and_correct_sequences(
-                #     model_instance, database_id, set(), many_to_many_attributes, False)
+                if many_to_many_attributes: # Handle the many-to-many
+                    self._save_and_correct_sequences(
+                        model_instance, database_id, set(), many_to_many_attributes, False)
 
             self.message_user(
                 request, f'Export all inserted for the connection {obj}', messages.SUCCESS)
