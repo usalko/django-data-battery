@@ -192,10 +192,10 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
             is_force_insert = not obj._meta.model.objects.using(
                 using).filter(pk=obj.pk).exists()
-            # if recursion_level > 1 and not is_force_insert:  # Optimization heuristic: Don't refresh so deep
-            #     self._clear_many_to_many_attributes(using, obj)
-            #     obj._state.db = using
-            #     return
+            if recursion_level > 1 and not is_force_insert:  # Optimization heuristic: Don't refresh so deep
+                # self._clear_many_to_many_attributes(using, obj)
+                obj._state.db = using
+                return
             if is_force_insert:
                 obj.save(using=using, force_insert=True)
                 self._debug_stat(obj, 'save')
@@ -231,7 +231,18 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
         if obj in read_circuit_breaker:
             return
         if isinstance(obj, User):
-            User(id=obj.pk).save(using=database_id)
+            is_force_insert = not obj._meta.model.objects.using(
+                database_id).filter(pk=obj.pk).exists()
+            if recursion_level > 1 and not is_force_insert:  # Optimization heuristic: Don't refresh so deep
+                # self._clear_many_to_many_attributes(using, obj)
+                obj._state.db = database_id
+                return
+            if is_force_insert:
+                User(id=obj.pk).save(using=database_id, force_insert=True)
+                self._debug_stat(obj, 'save')
+            else:
+                User(id=obj.pk).save(using=database_id, force_update=True)
+                self._debug_stat(obj, 'save')
             return
 
         read_circuit_breaker.add(obj)
