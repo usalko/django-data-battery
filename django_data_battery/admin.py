@@ -1,18 +1,17 @@
+from time import time
 from logging import exception
+from typing import Any
 
 from django.apps import apps
 from django.conf import settings
 from django.contrib import admin, messages
 from django.contrib.admin.options import HttpResponseRedirect, csrf_protect_m
 from django.contrib.admin.utils import unquote
-from django.db import connection, connections, transaction, utils
-from django.urls import path
 from django.contrib.auth.models import User
 from django.core.management.commands import migrate
+from django.db import connection, connections, transaction, utils
 from django.db.models import signals
-from typing import Any
-from logging import info
-
+from django.urls import path
 
 from .models import *
 from .utils.triggers_factory import TriggersFactory
@@ -40,6 +39,7 @@ def _is_utility_application(app_label: str):
 
 
 class DjangoModelAdmin(admin.ModelAdmin):
+
     change_list_template = 'django_data_battery/admin_change_list_django_model.html'
 
     actions = ['_refresh']
@@ -66,6 +66,7 @@ class DjangoModelAdmin(admin.ModelAdmin):
                 added_count += 1
 
             # Create triggers
+            # FIXME: PLEASE, PLEASE DON"T CREATE TRIGGERS FOR THE TABLES WITHOUT INTEGER PRIMARY KEYS
             if self.database_type == 'sqlite3':
                 try:
                     cursor = connection.cursor()
@@ -103,29 +104,46 @@ class DjangoModelAdmin(admin.ModelAdmin):
 class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
     change_form_template = 'django_data_battery/admin_change_form_database_connection_settings.html'
 
-    def _debug_stat(self, primary_key: Any, method_name):
+    # def _logger_configure(self, logger_level: int = DEBUG):
+    #     root_logger = getLogger()
+    #     console_handlers_with_required_level = [handler for handler in root_logger.handlers if hasattr(handler, 'level') and not(handler.level is None) and handler.level <= logger_level and hasattr(handler, 'stream') and id (handler.stream) == id(stdout)]
+    #     if not console_handlers_with_required_level:
+    #         console_handler = StreamHandler(stdout)
+    #         console_handler.setFormatter(Formatter('%(levelname)s:%(message)s'))
+    #         console_handler.setLevel(logger_level)
+    #         root_logger.addHandler(console_handler)
+
+    def _debug_stat(self, obj: models.Model, method_name):
+
         if not hasattr(self, '_debug_stat_storage'):
             self._debug_stat_storage = dict()
-        statistic_key = (str(primary_key), str(method_name))
+            self._debug_stat_storage_creation_time = time()
+        statistic_key = (str(obj._meta.model_name),
+                         str(obj.pk), str(method_name))
         if not (statistic_key in self._debug_stat_storage):
             self._debug_stat_storage[statistic_key] = 1
         else:
             self._debug_stat_storage[statistic_key] += 1
 
     def print_debug_info(self):
+
         if not hasattr(self, '_debug_stat_storage'):
-            info('The statistics is empty. Perhaps no one call "_debug_stat" occurred.')
+            print('The statistics is empty. Perhaps no one call "_debug_stat" occurred.')
         else:
-            info('Print debug statistics: ')
-            info('pk,method name,calls count')
+            print(
+                f'Print debug statistics (gathering time is {time() - self._debug_stat_storage_creation_time}s): ')
+            print('model_name,pk,method name,calls count')
             for statistic_key, count in self._debug_stat_storage.items():
-                info(','.join(statistic_key[0], statistic_key[1], str(count)))
-        info('--------------------------------------------------------------')
+                print(
+                    ','.join([statistic_key[0], statistic_key[1], statistic_key[2], str(count)]))
+        print('--------------------------------------------------------------')
 
     def _url(self, obj: DatabaseConnectionSettings):
+
         return obj.engine
 
     def _get_or_create_database_id(self, obj: DatabaseConnectionSettings) -> str:
+
         database_id = str(obj)  # just something unique
         if not (database_id in connections.databases):
             newDatabase = {}
@@ -140,7 +158,17 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
         return database_id
 
-    def _save_with_the_child_tree(self, obj: models.Model, using: str):
+    def _clear_many_to_many_attributes(self, using: str, obj: models.Model):
+
+        for field_object in [field_object for field_object in type(
+                obj)._meta.get_fields() if field_object.many_to_many]:
+            if hasattr(obj, f'{field_object.name}_set'):
+                self._temporary_clear(using, obj, f'{field_object.name}_set')
+            elif hasattr(obj, field_object.name):
+                self._temporary_clear(using, obj, field_object.name)
+
+    def _save_with_the_child_tree(self, obj: models.Model, using: str, recursion_level: int):
+
         try:
             foreign_key_fields = [field_object for field_object in type(
                 obj)._meta.get_fields() if isinstance(field_object, models.ForeignKey)]
@@ -148,26 +176,37 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 relation_object = getattr(obj, field_object.name)
                 if relation_object:
                     self._save_with_the_child_tree(
-                        relation_object, using=using)
-                    is_force_insert = not relation_object._meta.model.objects.using(
-                        using).filter(pk=relation_object.pk).exists()
-                    if is_force_insert:
-                        relation_object.save(using=using, force_insert=True)
-                    else:
-                        relation_object.save(using=using, force_update=True)
+                        relation_object, using=using, recursion_level=recursion_level+1)
+                    # is_force_insert = not relation_object._meta.model.objects.using(
+                    #     using).filter(pk=relation_object.pk).exists()
+                    # if recursion_level > 1 and not is_force_insert:  # Optimization heuristic: Don't refresh so deep
+                    #     self._clear_many_to_many_attributes(using, relation_object)
+                    #     relation_object._state.db = using
+                    #     return
+                    # if is_force_insert:
+                    #     relation_object.save(using=using, force_insert=True)
+                    #     self._debug_stat(relation_object, 'save')
+                    # else:
+                    #     relation_object.save(using=using, force_update=True)
+                    #     self._debug_stat(relation_object, 'save')
 
             is_force_insert = not obj._meta.model.objects.using(
                 using).filter(pk=obj.pk).exists()
+            # if recursion_level > 1 and not is_force_insert:  # Optimization heuristic: Don't refresh so deep
+            #     self._clear_many_to_many_attributes(using, obj)
+            #     obj._state.db = using
+            #     return
             if is_force_insert:
                 obj.save(using=using, force_insert=True)
-                self._debug_stat(obj.pk, 'save')
+                self._debug_stat(obj, 'save')
             else:
                 obj.save(using=using, force_update=True)
-                self._debug_stat(obj.pk, 'save')
+                self._debug_stat(obj, 'save')
         except BaseException as e:
             raise e
 
     def _temporary_clear(self, db: str, obj: models.Model, attribute_name: str):
+
         many_to_many_manager = getattr(obj, attribute_name)
         with transaction.atomic(using=db, savepoint=False):
             signals.m2m_changed.send(
@@ -187,7 +226,8 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 model=many_to_many_manager.model, pk_set=None, using=db,
             )
 
-    def _save_and_correct_sequences(self, obj: models.Model, database_id: str, read_circuit_breaker: set, many_to_many_attributes: dict, without_many_to_many: bool):
+    def _save_and_correct_sequences(self, obj: models.Model, database_id: str, read_circuit_breaker: set, many_to_many_attributes: dict, without_many_to_many: bool, recursion_level: int = 0):
+
         if obj in read_circuit_breaker:
             return
         if isinstance(obj, User):
@@ -202,7 +242,7 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 relation_object = getattr(obj, field_object.name)
                 if relation_object:
                     self._save_and_correct_sequences(
-                        relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                        relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many, recursion_level=recursion_level + 1)
                     # setattr(obj, field_object.name, relation_object)
             elif field_object.many_to_many:
                 values = []
@@ -214,14 +254,14 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                     many_to_many_references = getattr(obj, attribute_name)
                     for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
-                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many, recursion_level=recursion_level + 1)
                         values.append(relation_object)
                 elif hasattr(obj, field_object.name):
                     attribute_name = field_object.name
                     many_to_many_references = getattr(obj, attribute_name)
                     for relation_object in many_to_many_references.all():
                         self._save_and_correct_sequences(
-                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many)
+                            relation_object, database_id, read_circuit_breaker, many_to_many_attributes, without_many_to_many, recursion_level=recursion_level + 1)
                         values.append(relation_object)
 
                 # mark many to many attribute
@@ -237,21 +277,24 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 for attribute_name, _ in many_to_many_attributes[global_id].items():
                     self._temporary_clear(database_id, obj, attribute_name)
             # Save all foreign key refs
-            self._save_with_the_child_tree(obj, using=database_id)
+            self._save_with_the_child_tree(
+                obj, using=database_id, recursion_level=recursion_level)
             # many to many handle
             if global_id in many_to_many_attributes and many_to_many_attributes[global_id] and not without_many_to_many:
                 for attribute_name, values in many_to_many_attributes[global_id].items():
                     for value in values:
                         self._save_with_the_child_tree(
-                            value, using=database_id)
+                            value, using=database_id, recursion_level=recursion_level)
                     getattr(obj, attribute_name).add(*values)
                 obj.save(using=database_id)
-                self._debug_stat(obj.pk, 'save')
+                self._debug_stat(obj, 'save')
 
         except BaseException as e:
             exception(e)
 
     def _export_inserted(self, request, obj: DatabaseConnectionSettings = None):
+
+        # try/catch for the batch data transfer
         try:
             database_id = self._get_or_create_database_id(obj)
             for app_label in set([model._meta.app_label for model in apps.get_models()]):
@@ -291,6 +334,7 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
 
     @csrf_protect_m
     def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
+
         if request.method == 'GET' and '_export_inserted' in request.GET:
             obj = self.get_object(request, unquote(object_id))
             self._export_inserted(request, obj)
@@ -304,6 +348,7 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
         )
 
     class Meta:
+
         model = DatabaseConnectionSettings
         fields = '__all__'
 
