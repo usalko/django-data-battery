@@ -10,6 +10,8 @@ from django.urls import path
 from django.contrib.auth.models import User
 from django.core.management.commands import migrate
 from django.db.models import signals
+from typing import Any
+from logging import info
 
 
 from .models import *
@@ -101,6 +103,25 @@ class DjangoModelAdmin(admin.ModelAdmin):
 class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
     change_form_template = 'django_data_battery/admin_change_form_database_connection_settings.html'
 
+    def _debug_stat(self, primary_key: Any, method_name):
+        if not hasattr(self, '_debug_stat_storage'):
+            self._debug_stat_storage = dict()
+        statistic_key = (str(primary_key), str(method_name))
+        if not (statistic_key in self._debug_stat_storage):
+            self._debug_stat_storage[statistic_key] = 1
+        else:
+            self._debug_stat_storage[statistic_key] += 1
+
+    def print_debug_info(self):
+        if not hasattr(self, '_debug_stat_storage'):
+            info('The statistics is empty. Perhaps no one call "_debug_stat" occurred.')
+        else:
+            info('Print debug statistics: ')
+            info('pk,method name,calls count')
+            for statistic_key, count in self._debug_stat_storage.items():
+                info(','.join(statistic_key[0], statistic_key[1], str(count)))
+        info('--------------------------------------------------------------')
+
     def _url(self, obj: DatabaseConnectionSettings):
         return obj.engine
 
@@ -126,18 +147,23 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
             for field_object in foreign_key_fields:
                 relation_object = getattr(obj, field_object.name)
                 if relation_object:
-                    self._save_with_the_child_tree(relation_object, using=using)
-                    is_force_insert = not relation_object._meta.model.objects.using(using).filter(pk=relation_object.pk).exists()
+                    self._save_with_the_child_tree(
+                        relation_object, using=using)
+                    is_force_insert = not relation_object._meta.model.objects.using(
+                        using).filter(pk=relation_object.pk).exists()
                     if is_force_insert:
                         relation_object.save(using=using, force_insert=True)
                     else:
                         relation_object.save(using=using, force_update=True)
 
-            is_force_insert = not obj._meta.model.objects.using(using).filter(pk=obj.pk).exists()
+            is_force_insert = not obj._meta.model.objects.using(
+                using).filter(pk=obj.pk).exists()
             if is_force_insert:
                 obj.save(using=using, force_insert=True)
+                self._debug_stat(obj.pk, 'save')
             else:
                 obj.save(using=using, force_update=True)
+                self._debug_stat(obj.pk, 'save')
         except BaseException as e:
             raise e
 
@@ -216,9 +242,11 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
             if global_id in many_to_many_attributes and many_to_many_attributes[global_id] and not without_many_to_many:
                 for attribute_name, values in many_to_many_attributes[global_id].items():
                     for value in values:
-                        self._save_with_the_child_tree(value, using=database_id)
+                        self._save_with_the_child_tree(
+                            value, using=database_id)
                     getattr(obj, attribute_name).add(*values)
                 obj.save(using=database_id)
+                self._debug_stat(obj.pk, 'save')
 
         except BaseException as e:
             exception(e)
@@ -247,10 +275,11 @@ class DatabaseConnectionSettingsAdmin(admin.ModelAdmin):
                 many_to_many_attributes = dict()
                 self._save_and_correct_sequences(
                     model_instance, database_id, set(), many_to_many_attributes, True)
-                if many_to_many_attributes: # Handle the many-to-many
+                if many_to_many_attributes:  # Handle the many-to-many
                     self._save_and_correct_sequences(
                         model_instance, database_id, set(), many_to_many_attributes, False)
 
+            self.print_debug_info()
             self.message_user(
                 request, f'Export all inserted for the connection {obj}', messages.SUCCESS)
         except BaseException as e:
